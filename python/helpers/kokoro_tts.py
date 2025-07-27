@@ -3,7 +3,7 @@
 import base64
 import io
 import warnings
-import asyncio
+import time
 import soundfile as sf
 from python.helpers import runtime
 from python.helpers.print_style import PrintStyle
@@ -16,23 +16,23 @@ _speed = 1.1
 is_updating_model = False
 
 
-async def preload():
+def preload():
     try:
-        # return await runtime.call_development_function(_preload)
-        return await _preload()
+        # return runtime.call_development_function(_preload)
+        return _preload()
     except Exception as e:
         # if not runtime.is_development():
         raise e
         # Fallback to direct execution if RFC fails in development
         # PrintStyle.standard("RFC failed, falling back to direct execution...")
-        # return await _preload()
+        # return _preload()
 
 
-async def _preload():
+def _preload():
     global _pipeline, is_updating_model
 
     while is_updating_model:
-        await asyncio.sleep(0.1)
+        time.sleep(0.1)
 
     try:
         is_updating_model = True
@@ -44,9 +44,9 @@ async def _preload():
         is_updating_model = False
 
 
-async def is_downloading():
+def is_downloading():
     try:
-        # return await runtime.call_development_function(_is_downloading)
+        # return runtime.call_development_function(_is_downloading)
         return _is_downloading()
     except Exception as e:
         # if not runtime.is_development():
@@ -58,9 +58,9 @@ async def is_downloading():
 def _is_downloading():
     return is_updating_model
 
-async def is_downloaded():
+def is_downloaded():
     try:
-        # return await runtime.call_development_function(_is_downloaded)
+        # return runtime.call_development_function(_is_downloaded)
         return _is_downloaded()
     except Exception as e:
         # if not runtime.is_development():
@@ -72,20 +72,20 @@ def _is_downloaded():
     return _pipeline is not None
 
 
-async def synthesize_sentences(sentences: list[str]):
+def synthesize_sentences(sentences: list[str]):
     """Generate audio for multiple sentences and return concatenated base64 audio"""
     try:
-        # return await runtime.call_development_function(_synthesize_sentences, sentences)
-        return await _synthesize_sentences(sentences)
+        # return runtime.call_development_function(_synthesize_sentences, sentences)
+        return _synthesize_sentences(sentences)
     except Exception as e:
         # if not runtime.is_development():
         raise e
         # Fallback to direct execution if RFC fails in development
-        # return await _synthesize_sentences(sentences)
+        # return _synthesize_sentences(sentences)
 
 
-async def _synthesize_sentences(sentences: list[str]):
-    await _preload()
+def _synthesize_sentences(sentences: list[str]):
+    _preload()
 
     combined_audio = []
 
@@ -110,4 +110,4 @@ async def _synthesize_sentences(sentences: list[str]):
 
     except Exception as e:
         PrintStyle.error(f"Error in Kokoro TTS synthesis: {e}")
-        raise    
+        raise

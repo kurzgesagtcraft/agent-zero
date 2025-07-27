@@ -40,10 +40,10 @@ class ApiHandler:
         return cls.requires_auth()
 
     @abstractmethod
-    async def process(self, input: Input, request: Request) -> Output:
+    def process(self, input: Input, request: Request) -> Output:
         pass
 
-    async def handle_request(self, request: Request) -> Response:
+    def handle_request(self, request: Request) -> Response:
         try:
             # input data from request based on type
             input_data: Input = {}
@@ -60,7 +60,7 @@ class ApiHandler:
                 input_data = {"data": request.get_data(as_text=True)}
 
             # process via handler
-            output = await self.process(input_data, request)
+            output = self.process(input_data, request)
 
             # return output based on type
             if isinstance(output, Response):

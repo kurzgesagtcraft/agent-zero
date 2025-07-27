@@ -221,22 +221,22 @@ class LiteLLMChatWrapper(SimpleChatModel):
                     message=AIMessageChunk(content=parsed["response_delta"])
                 )
 
-    async def _astream(
+    def _astream(
         self,
         messages: List[BaseMessage],
         stop: Optional[List[str]] = None,
         run_manager: Optional[AsyncCallbackManagerForLLMRun] = None,
         **kwargs: Any,
-    ) -> AsyncIterator[ChatGenerationChunk]:
+    ) -> Iterator[ChatGenerationChunk]:
         msgs = self._convert_messages(messages)
-        response = await acompletion(
+        response = completion(
             model=self.model_name,
             messages=msgs,
             stream=True,
             stop=stop,
             **{**self.kwargs, **kwargs},
         )
-        async for chunk in response:  # type: ignore
+        for chunk in response:  # type: ignore
             parsed = _parse_chunk(chunk)
             # Only yield chunks with non-None content
             if parsed["response_delta"]:
@@ -244,14 +244,14 @@ class LiteLLMChatWrapper(SimpleChatModel):
                     message=AIMessageChunk(content=parsed["response_delta"])
                 )
 
-    async def unified_call(
+    def unified_call(
         self,
         system_message="",
         user_message="",
         messages: List[BaseMessage] | None = None,
-        response_callback: Callable[[str, str], Awaitable[None]] | None = None,
-        reasoning_callback: Callable[[str, str], Awaitable[None]] | None = None,
-        tokens_callback: Callable[[str, int], Awaitable[None]] | None = None,
+        response_callback: Callable[[str, str], None] | None = None,
+        reasoning_callback: Callable[[str, str], None] | None = None,
+        tokens_callback: Callable[[str, int], None] | None = None,
         **kwargs: Any,
     ) -> Tuple[str, str]:
 
@@ -269,7 +269,7 @@ class LiteLLMChatWrapper(SimpleChatModel):
         msgs_conv = self._convert_messages(messages)
 
         # call model
-        _completion = await acompletion(
+        _completion = completion(
             model=self.model_name,
             messages=msgs_conv,
             stream=True,
@@ -281,15 +281,15 @@ class LiteLLMChatWrapper(SimpleChatModel):
         response = ""
 
         # iterate over chunks
-        async for chunk in _completion:  # type: ignore
+        for chunk in _completion:  # type: ignore
             parsed = _parse_chunk(chunk)
             # collect reasoning delta and call callbacks
             if parsed["reasoning_delta"]:
                 reasoning += parsed["reasoning_delta"]
                 if reasoning_callback:
-                    await reasoning_callback(parsed["reasoning_delta"], reasoning)
+                    reasoning_callback(parsed["reasoning_delta"], reasoning)
                 if tokens_callback:
-                    await tokens_callback(
+                    tokens_callback(
                         parsed["reasoning_delta"],
                         approximate_tokens(parsed["reasoning_delta"]),
                     )
@@ -297,9 +297,9 @@ class LiteLLMChatWrapper(SimpleChatModel):
             if parsed["response_delta"]:
                 response += parsed["response_delta"]
                 if response_callback:
-                    await response_callback(parsed["response_delta"], response)
+                    response_callback(parsed["response_delta"], response)
                 if tokens_callback:
-                    await tokens_callback(
+                    tokens_callback(
                         parsed["response_delta"],
                         approximate_tokens(parsed["response_delta"]),
                     )
@@ -329,15 +329,15 @@ class BrowserCompatibleChatWrapper(LiteLLMChatWrapper):
         result = super()._call(messages, stop, run_manager, **kwargs)
         return result
 
-    async def _astream(
+    def _astream(
         self,
         messages: List[BaseMessage],
         stop: Optional[List[str]] = None,
         run_manager: Optional[AsyncCallbackManagerForLLMRun] = None,
         **kwargs: Any,
-    ) -> AsyncIterator[ChatGenerationChunk]:
+    ) -> Iterator[ChatGenerationChunk]:
         turn_off_logging()
-        async for chunk in super()._astream(messages, stop, run_manager, **kwargs):
+        for chunk in super()._astream(messages, stop, run_manager, **kwargs):
             yield chunk
 
 

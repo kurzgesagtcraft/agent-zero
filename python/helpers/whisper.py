@@ -2,6 +2,7 @@ import base64
 import warnings
 import whisper
 import tempfile
+import time
 import asyncio
 from python.helpers import runtime, rfc, settings, files
 from python.helpers.print_style import PrintStyle
@@ -13,19 +14,19 @@ _model = None
 _model_name = ""
 is_updating_model = False  # Tracks whether the model is currently updating
 
-async def preload(model_name:str):
+def preload(model_name:str):
     try:
-        # return await runtime.call_development_function(_preload, model_name)
-        return await _preload(model_name)
+        # return runtime.call_development_function(_preload, model_name)
+        return _preload(model_name)
     except Exception as e:
         # if not runtime.is_development():
         raise e
         
-async def _preload(model_name:str):
+def _preload(model_name:str):
     global _model, _model_name, is_updating_model
 
     while is_updating_model:
-        await asyncio.sleep(0.1)
+        time.sleep(0.1)
 
     try:
         is_updating_model = True
@@ -36,16 +37,16 @@ async def _preload(model_name:str):
     finally:
         is_updating_model = False
 
-async def is_downloading():
-    # return await runtime.call_development_function(_is_downloading)
+def is_downloading():
+    # return runtime.call_development_function(_is_downloading)
     return _is_downloading()
 
 def _is_downloading():
     return is_updating_model
 
-async def is_downloaded():
+def is_downloaded():
     try:
-        # return await runtime.call_development_function(_is_downloaded)
+        # return runtime.call_development_function(_is_downloaded)
         return _is_downloaded()
     except Exception as e:
         # if not runtime.is_development():
@@ -56,13 +57,13 @@ async def is_downloaded():
 def _is_downloaded():
     return _model is not None
 
-async def transcribe(model_name:str, audio_bytes_b64: str):
-    # return await runtime.call_development_function(_transcribe, model_name, audio_bytes_b64)
-    return await _transcribe(model_name, audio_bytes_b64)
+def transcribe(model_name:str, audio_bytes_b64: str):
+    # return runtime.call_development_function(_transcribe, model_name, audio_bytes_b64)
+    return _transcribe(model_name, audio_bytes_b64)
 
 
-async def _transcribe(model_name:str, audio_bytes_b64: str):
-    await _preload(model_name)
+def _transcribe(model_name:str, audio_bytes_b64: str):
+    _preload(model_name)
     
     # Decode audio bytes if encoded as a base64 string
     audio_bytes = base64.b64decode(audio_bytes_b64)

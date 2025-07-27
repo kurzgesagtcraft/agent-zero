@@ -7,7 +7,7 @@ from python.helpers.localization import Localization
 
 
 class SchedulerTaskUpdate(ApiHandler):
-    async def process(self, input: Input, request: Request) -> Output:
+    def process(self, input: Input, request: Request) -> Output:
         """
         Update an existing task in the scheduler
         """
@@ -16,7 +16,7 @@ class SchedulerTaskUpdate(ApiHandler):
             Localization.get().set_timezone(timezone)
 
         scheduler = TaskScheduler.get()
-        await scheduler.reload()
+        scheduler.reload()
 
         # Get task ID from input
         task_id: str = input.get("task_id", "")
@@ -76,7 +76,7 @@ class SchedulerTaskUpdate(ApiHandler):
                 return {"error": f"Invalid plan format: {str(e)}"}
 
         # Use atomic update method to apply changes
-        updated_task = await scheduler.update_task(task_id, **update_params)
+        updated_task = scheduler.update_task(task_id, **update_params)
 
         if not updated_task:
             return {"error": f"Task with ID {task_id} not found or could not be updated"}

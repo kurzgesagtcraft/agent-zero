@@ -3,7 +3,7 @@ from python.helpers import runtime
 from python.helpers.tunnel_manager import TunnelManager
 
 class Tunnel(ApiHandler):
-    async def process(self, input: dict, request: Request) -> dict | Response:
+    def process(self, input: dict, request: Request) -> dict | Response:
         action = input.get("action", "get")
         
         tunnel_manager = TunnelManager.get_instance()
@@ -41,7 +41,7 @@ class Tunnel(ApiHandler):
         return {
             "success": False,
             "error": "Invalid action. Use 'create', 'stop', or 'get'."
-        } 
+        }
 
     def stop(self):
         tunnel_manager = TunnelManager.get_instance()

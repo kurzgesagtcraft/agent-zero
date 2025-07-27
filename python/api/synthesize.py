@@ -5,12 +5,12 @@ from python.helpers.api import ApiHandler, Request, Response
 from python.helpers import runtime, settings, kokoro_tts
 
 class Synthesize(ApiHandler):
-    async def process(self, input: dict, request: Request) -> dict | Response:
+    def process(self, input: dict, request: Request) -> dict | Response:
         text = input.get("text", "")
         ctxid = input.get("ctxid", "")
         
         context = self.get_context(ctxid)
-        if not await kokoro_tts.is_downloaded():
+        if not kokoro_tts.is_downloaded():
             context.log.log(type="info", content="Kokoro TTS model is currently being initialized, please wait...")
 
         try:
@@ -20,18 +20,18 @@ class Synthesize(ApiHandler):
             
             # if len(chunks) == 1:
             #     # Single chunk - return as before
-            #     audio = await kokoro_tts.synthesize_sentences(chunks)
+            #     audio = kokoro_tts.synthesize_sentences(chunks)
             #     return {"audio": audio, "success": True}
             # else:
             #     # Multiple chunks - return as sequence
             #     audio_parts = []
             #     for chunk in chunks:
-            #         chunk_audio = await kokoro_tts.synthesize_sentences([chunk])
+            #         chunk_audio = kokoro_tts.synthesize_sentences([chunk])
             #         audio_parts.append(chunk_audio)
             #     return {"audio_parts": audio_parts, "success": True}
 
             # audio is chunked on the frontend for better flow
-            audio = await kokoro_tts.synthesize_sentences([text])
+            audio = kokoro_tts.synthesize_sentences([text])
             return {"audio": audio, "success": True}
         except Exception as e:
             return {"error": str(e), "success": False}

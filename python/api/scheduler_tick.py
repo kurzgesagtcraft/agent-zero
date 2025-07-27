@@ -19,7 +19,7 @@ class SchedulerTick(ApiHandler):
     def requires_csrf(cls) -> bool:
         return False
 
-    async def process(self, input: Input, request: Request) -> Output:
+    def process(self, input: Input, request: Request) -> Output:
         # Get timezone from input (do not set if not provided, we then rely on poll() to set it)
         if timezone := input.get("timezone", None):
             Localization.get().set_timezone(timezone)
@@ -30,7 +30,7 @@ class SchedulerTick(ApiHandler):
 
         # Get the task scheduler instance and print detailed debug info
         scheduler = TaskScheduler.get()
-        await scheduler.reload()
+        scheduler.reload()
 
         tasks = scheduler.get_tasks()
         tasks_count = len(tasks)
@@ -42,7 +42,7 @@ class SchedulerTick(ApiHandler):
                 printer.print(f"Task: {task.name} (UUID: {task.uuid}, State: {task.state})")
 
         # Run the scheduler tick
-        await scheduler.tick()
+        scheduler.tick()
 
         # Get updated tasks after tick
         serialized_tasks = scheduler.serialize_all_tasks()
