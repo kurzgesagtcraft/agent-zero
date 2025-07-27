@@ -642,7 +642,7 @@ class TaskScheduler:
     def find_task_by_name(self, name: str) -> list[Union[ScheduledTask, AdHocTask, PlannedTask]]:
         return self._tasks.find_task_by_name(name)
 
-    def tick(self):
+    async def tick(self):
         for task in self._tasks.get_due_tasks():
             self._run_task(task)
 
