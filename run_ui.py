@@ -23,11 +23,11 @@ from python.helpers.print_style import PrintStyle
 # Set the new timezone to 'UTC'
 os.environ["TZ"] = "UTC"
 # Apply the timezone change
-# if hasattr(time, 'tzset'):
-#     time.tzset()
+if hasattr(time, 'tzset'):
+    time.tzset()
 
 # initialize the internal Flask server
-webapp = Flask("app", static_folder='webui')
+webapp = Flask("app", static_folder=get_abs_path("./webui"), static_url_path="/")
 webapp.secret_key = os.getenv("FLASK_SECRET_KEY") or secrets.token_hex(32)
 webapp.config.update(
     JSON_SORT_KEYS=False,
@@ -80,7 +80,7 @@ def is_loopback_address(address):
 
 def requires_api_key(f):
     @wraps(f)
-    def decorated(*args, **kwargs):
+    async def decorated(*args, **kwargs):
         valid_api_key = dotenv.get_dotenv_value("API_KEY")
         if api_key := request.headers.get("X-API-KEY"):
             if api_key != valid_api_key:
@@ -91,7 +91,7 @@ def requires_api_key(f):
                 return Response("API key required", 401)
         else:
             return Response("API key required", 401)
-        return f(*args, **kwargs)
+        return await f(*args, **kwargs)
 
     return decorated
 
@@ -99,14 +99,14 @@ def requires_api_key(f):
 # allow only loopback addresses
 def requires_loopback(f):
     @wraps(f)
-    def decorated(*args, **kwargs):
+    async def decorated(*args, **kwargs):
         if not is_loopback_address(request.remote_addr):
             return Response(
                 "Access denied.",
                 403,
                 {},
             )
-        return f(*args, **kwargs)
+        return await f(*args, **kwargs)
 
     return decorated
 
@@ -114,7 +114,7 @@ def requires_loopback(f):
 # require authentication for handlers
 def requires_auth(f):
     @wraps(f)
-    def decorated(*args, **kwargs):
+    async def decorated(*args, **kwargs):
         user = dotenv.get_dotenv_value("AUTH_LOGIN")
         password = dotenv.get_dotenv_value("AUTH_PASSWORD")
         if user and password:
@@ -126,44 +126,72 @@ def requires_auth(f):
                     401,
                     {"WWW-Authenticate": 'Basic realm="Login Required"'},
                 )
-        return f(*args, **kwargs)
+        return await f(*args, **kwargs)
 
     return decorated
 
 
 def csrf_protect(f):
     @wraps(f)
-    def decorated(*args, **kwargs):
+    async def decorated(*args, **kwargs):
         token = session.get("csrf_token")
         header = request.headers.get("X-CSRF-Token")
         cookie = request.cookies.get("csrf_token_" + runtime.get_runtime_id())
         sent = header or cookie
         if not token or not sent or token != sent:
             return Response("CSRF token missing or invalid", 403)
-        return f(*args, **kwargs)
+        return await f(*args, **kwargs)
 
     return decorated
 
 
 # handle default address, load index
-@webapp.route("/")
+@webapp.route("/", methods=["GET"])
 @requires_auth
-def serve_index():
-    return webapp.send_static_file('index.html')
+async def serve_index():
+    gitinfo = None
+    try:
+        gitinfo = git.get_git_info()
+    except Exception:
+        gitinfo = {
+            "version": "unknown",
+            "commit_time": "unknown",
+        }
+    return files.read_file(
+        "./webui/index.html",
+        version_no=gitinfo["version"],
+        version_time=gitinfo["commit_time"],
+    )
 
-# run the internal server
-if __name__ == "__main__":
-    runtime.initialize()
-    dotenv.load_dotenv()
-    
-    # initialize and register API handlers
-    handlers = load_classes_from_folder("python/api", "*.py", ApiHandler)
-    for handler in handlers:
+
+def run():
+    PrintStyle().print("Initializing framework...")
+
+    # Suppress only request logs but keep the startup messages
+    from werkzeug.serving import WSGIRequestHandler
+    from werkzeug.serving import make_server
+    from werkzeug.middleware.dispatcher import DispatcherMiddleware
+    from a2wsgi import ASGIMiddleware, WSGIMiddleware
+
+    PrintStyle().print("Starting server...")
+
+    class NoRequestLoggingWSGIRequestHandler(WSGIRequestHandler):
+        def log_request(self, code="-", size="-"):
+            pass  # Override to suppress request logging
+
+    # Get configuration from environment
+    port = runtime.get_web_ui_port()
+    host = (
+        runtime.get_arg("host") or dotenv.get_dotenv_value("WEB_UI_HOST") or "localhost"
+    )
+    server = None
+
+    def register_api_handler(app, handler: type[ApiHandler]):
         name = handler.__module__.split(".")[-1]
-        instance = handler(webapp, lock)
-        
-        def handler_wrap():
-            return instance.handle_request(request=request)
+        instance = handler(app, lock)
+
+        async def handler_wrap():
+            return await instance.handle_request(request=request)
 
         if handler.requires_loopback():
             handler_wrap = requires_loopback(handler_wrap)
@@ -174,25 +202,62 @@ if __name__ == "__main__":
         if handler.requires_csrf():
             handler_wrap = csrf_protect(handler_wrap)
 
-        webapp.add_url_rule(
+        app.add_url_rule(
             f"/{name}",
             f"/{name}",
             handler_wrap,
             methods=handler.get_methods(),
         )
 
+    # initialize and register API handlers
+    handlers = load_classes_from_folder("python/api", "*.py", ApiHandler)
+    for handler in handlers:
+        register_api_handler(webapp, handler)
+
+    # add the webapp and mcp to the app
+    app = DispatcherMiddleware(
+        webapp,
+        {
+            "/mcp": ASGIMiddleware(app=mcp_server.DynamicMcpProxy.get_instance()),  # type: ignore
+        },
+    )
+    PrintStyle().debug("Registered middleware for MCP and MCP token")
+
+    PrintStyle().debug(f"Starting server at {host}:{port}...")
+
+    server = make_server(
+        host=host,
+        port=port,
+        app=app,
+        request_handler=NoRequestLoggingWSGIRequestHandler,
+        threaded=True,
+    )
+    process.set_server(server)
+    server.log_startup()
+
+    # Start init_a0 in a background thread when server starts
+    # threading.Thread(target=init_a0, daemon=True).start()
+    init_a0()
+
+    # run the server
+    server.serve_forever()
+
+
+def init_a0():
     # initialize contexts and MCP
-    initialize.initialize_chats()
+    init_chats = initialize.initialize_chats()
     initialize.initialize_mcp()
     # start job loop
     initialize.initialize_job_loop()
     # preload
     initialize.initialize_preload()
 
-    port = runtime.get_web_ui_port()
-    host = (
-        runtime.get_arg("host") or dotenv.get_dotenv_value("WEB_UI_HOST") or "localhost"
-    )
-    
-    PrintStyle().print(f"Starting server at http://{host}:{port}...")
-    webapp.run(host=host, port=port, debug=True)
+    # only wait for init chats, otherwise they would seem to dissapear for a while on restart
+    init_chats.result_sync()
+
+
+# run the internal server
+if __name__ == "__main__":
+    runtime.initialize()
+    dotenv.load_dotenv()
+    run()

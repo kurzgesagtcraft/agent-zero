@@ -66,7 +66,7 @@ class DeferredTask:
         self.children: list[ChildTask] = []
 
     def start_task(
-        self, func: Callable[..., Any], *args: Any, **kwargs: Any
+        self, func: Callable[..., Coroutine[Any, Any, Any]], *args: Any, **kwargs: Any
     ):
         self.func = func
         self.args = args
@@ -81,15 +81,7 @@ class DeferredTask:
         self._future = self.event_loop_thread.run_coroutine(self._run())
 
     async def _run(self):
-        # Check if the function is a coroutine function
-        if asyncio.iscoroutinefunction(self.func):
-            return await self.func(*self.args, **self.kwargs)
-        else:
-            # For regular functions, run them in an executor
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(
-                None, self.func, *self.args, **self.kwargs
-            )
+        return await self.func(*self.args, **self.kwargs)
 
     def is_ready(self) -> bool:
         return self._future.done() if self._future else False

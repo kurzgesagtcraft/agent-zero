@@ -5,7 +5,7 @@ import requests
 
 
 class TunnelProxy(ApiHandler):
-    def process(self, input: dict, request: Request) -> dict | Response:
+    async def process(self, input: dict, request: Request) -> dict | Response:
         # Get configuration from environment
         tunnel_api_port = (
             runtime.get_arg("tunnel_api_port")
@@ -32,4 +32,4 @@ class TunnelProxy(ApiHandler):
         else:
             # forward to API handler directly
             from python.api.tunnel import Tunnel
-            return Tunnel(self.app, self.thread_lock).process(input, request)
+            return await Tunnel(self.app, self.thread_lock).process(input, request)

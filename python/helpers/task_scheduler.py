@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone, timedelta
 import os
 import random
@@ -7,6 +8,9 @@ import uuid
 from enum import Enum
 from os.path import exists
 from typing import Any, Callable, Dict, Literal, Optional, Type, TypeVar, Union, cast, ClassVar
+
+import nest_asyncio
+nest_asyncio.apply()
 
 from crontab import CronTab
 from pydantic import BaseModel, Field, PrivateAttr
@@ -183,22 +187,22 @@ class BaseTask(BaseModel):
             return None
         return int((next_run - datetime.now(timezone.utc)).total_seconds() / 60)
 
-    def on_run(self):
+    async def on_run(self):
         pass
 
-    def on_finish(self):
+    async def on_finish(self):
         # Ensure that updated_at is refreshed to reflect completion time
         # This helps track when the task actually finished, regardless of success/error
-        TaskScheduler.get().update_task(
+        await TaskScheduler.get().update_task(
             self.uuid,
             updated_at=datetime.now(timezone.utc)
         )
 
-    def on_error(self, error: str):
+    async def on_error(self, error: str):
         # Update task state to ERROR and set last result
         scheduler = TaskScheduler.get()
-        scheduler.reload()  # Ensure we have the latest state
-        updated_task = scheduler.update_task(
+        await scheduler.reload()  # Ensure we have the latest state
+        updated_task = await scheduler.update_task(
             self.uuid,
             state=TaskState.ERROR,
             last_run=datetime.now(timezone.utc),
@@ -208,13 +212,13 @@ class BaseTask(BaseModel):
             PrintStyle(italic=True, font_color="red", padding=False).print(
                 f"Failed to update task {self.uuid} state to ERROR after error: {error}"
             )
-        scheduler.save()  # Force save after update
+        await scheduler.save()  # Force save after update
 
-    def on_success(self, result: str):
+    async def on_success(self, result: str):
         # Update task state to IDLE and set last result
         scheduler = TaskScheduler.get()
-        scheduler.reload()  # Ensure we have the latest state
-        updated_task = scheduler.update_task(
+        await scheduler.reload()  # Ensure we have the latest state
+        updated_task = await scheduler.update_task(
             self.uuid,
             state=TaskState.IDLE,
             last_run=datetime.now(timezone.utc),
@@ -224,7 +228,7 @@ class BaseTask(BaseModel):
             PrintStyle(italic=True, font_color="red", padding=False).print(
                 f"Failed to update task {self.uuid} state to IDLE after success"
             )
-        scheduler.save()  # Force save after update
+        await scheduler.save()  # Force save after update
 
 
 class AdHocTask(BaseTask):
@@ -400,15 +404,15 @@ class PlannedTask(BaseTask):
         with self._lock:
             return self.plan.get_next_launch_time()
 
-    def on_run(self):
+    async def on_run(self):
         with self._lock:
             # Get the next launch time and set it as in_progress
             next_launch_time = self.plan.should_launch()
             if next_launch_time is not None:
                 self.plan.set_in_progress(next_launch_time)
-        super().on_run()
+        await super().on_run()
 
-    def on_finish(self):
+    async def on_finish(self):
         # Handle plan item progression regardless of success or error
         plan_updated = False
 
@@ -421,20 +425,20 @@ class PlannedTask(BaseTask):
         # If we updated the plan, make sure to persist it
         if plan_updated:
             scheduler = TaskScheduler.get()
-            scheduler.reload()
-            scheduler.update_task(self.uuid, plan=self.plan)
-            scheduler.save()  # Force save
+            await scheduler.reload()
+            await scheduler.update_task(self.uuid, plan=self.plan)
+            await scheduler.save()  # Force save
 
         # Call the parent implementation for any additional cleanup
-        super().on_finish()
+        await super().on_finish()
 
-    def on_success(self, result: str):
+    async def on_success(self, result: str):
         # Call parent implementation to update state, etc.
-        super().on_success(result)
+        await super().on_success(result)
 
-    def on_error(self, error: str):
+    async def on_error(self, error: str):
         # Call parent implementation to update state, etc.
-        super().on_error(error)
+        await super().on_error(error)
 
 
 class SchedulerTaskList(BaseModel):
@@ -450,18 +454,18 @@ class SchedulerTaskList(BaseModel):
         if cls.__instance is None:
             if not exists(path):
                 make_dirs(path)
-                cls.__instance = cls(tasks=[]).save()
+                cls.__instance = asyncio.run(cls(tasks=[]).save())
             else:
                 cls.__instance = cls.model_validate_json(read_file(path))
         else:
-            cls.__instance.reload()
+            asyncio.run(cls.__instance.reload())
         return cls.__instance
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._lock = threading.RLock()
 
-    def reload(self) -> "SchedulerTaskList":
+    async def reload(self) -> "SchedulerTaskList":
         path = get_abs_path(SCHEDULER_FOLDER, "tasks.json")
         if exists(path):
             with self._lock:
@@ -470,13 +474,13 @@ class SchedulerTaskList(BaseModel):
                 self.tasks.extend(data.tasks)
         return self
 
-    def add_task(self, task: Union[ScheduledTask, AdHocTask, PlannedTask]) -> "SchedulerTaskList":
+    async def add_task(self, task: Union[ScheduledTask, AdHocTask, PlannedTask]) -> "SchedulerTaskList":
         with self._lock:
             self.tasks.append(task)
-            self.save()
+            await self.save()
         return self
 
-    def save(self) -> "SchedulerTaskList":
+    async def save(self) -> "SchedulerTaskList":
         with self._lock:
             # Debug: check for AdHocTasks with null tokens before saving
             for task in self.tasks:
@@ -516,7 +520,7 @@ class SchedulerTaskList(BaseModel):
 
         return self
 
-    def update_task_by_uuid(
+    async def update_task_by_uuid(
         self,
         task_uuid: str,
         updater_func: Callable[[Union[ScheduledTask, AdHocTask, PlannedTask]], None],
@@ -532,7 +536,7 @@ class SchedulerTaskList(BaseModel):
         """
         with self._lock:
             # Reload to ensure we have the latest state
-            self.reload()
+            await self.reload()
 
             # Find the task
             task = next((task for task in self.tasks if task.uuid == task_uuid and verify_func(task)), None)
@@ -543,7 +547,7 @@ class SchedulerTaskList(BaseModel):
             updater_func(task)
 
             # Save the changes
-            self.save()
+            await self.save()
 
             return task
 
@@ -559,9 +563,9 @@ class SchedulerTaskList(BaseModel):
                 and (not only_running or task.state == TaskState.RUNNING)
             ]
 
-    def get_due_tasks(self) -> list[Union[ScheduledTask, AdHocTask, PlannedTask]]:
+    async def get_due_tasks(self) -> list[Union[ScheduledTask, AdHocTask, PlannedTask]]:
         with self._lock:
-            self.reload()
+            await self.reload()
             return [
                 task for task in self.tasks
                 if task.check_schedule() and task.state == TaskState.IDLE
@@ -579,16 +583,16 @@ class SchedulerTaskList(BaseModel):
         with self._lock:
             return [task for task in self.tasks if name.lower() in task.name.lower()]
 
-    def remove_task_by_uuid(self, task_uuid: str) -> "SchedulerTaskList":
+    async def remove_task_by_uuid(self, task_uuid: str) -> "SchedulerTaskList":
         with self._lock:
             self.tasks = [task for task in self.tasks if task.uuid != task_uuid]
-            self.save()
+            await self.save()
         return self
 
-    def remove_task_by_name(self, name: str) -> "SchedulerTaskList":
+    async def remove_task_by_name(self, name: str) -> "SchedulerTaskList":
         with self._lock:
             self.tasks = [task for task in self.tasks if task.name != name]
-            self.save()
+            await self.save()
         return self
 
 
@@ -611,8 +615,8 @@ class TaskScheduler:
             self._printer = PrintStyle(italic=True, font_color="green", padding=False)
             self._initialized = True
 
-    def reload(self):
-        self._tasks.reload()
+    async def reload(self):
+        await self._tasks.reload()
 
     def get_tasks(self) -> list[Union[ScheduledTask, AdHocTask, PlannedTask]]:
         return self._tasks.get_tasks()
@@ -620,17 +624,17 @@ class TaskScheduler:
     def get_tasks_by_context_id(self, context_id: str, only_running: bool = False) -> list[Union[ScheduledTask, AdHocTask, PlannedTask]]:
         return self._tasks.get_tasks_by_context_id(context_id, only_running)
 
-    def add_task(self, task: Union[ScheduledTask, AdHocTask, PlannedTask]) -> "TaskScheduler":
-        self._tasks.add_task(task)
-        ctx = self._get_chat_context(task)  # invoke context creation
+    async def add_task(self, task: Union[ScheduledTask, AdHocTask, PlannedTask]) -> "TaskScheduler":
+        await self._tasks.add_task(task)
+        ctx = await self._get_chat_context(task)  # invoke context creation
         return self
 
-    def remove_task_by_uuid(self, task_uuid: str) -> "TaskScheduler":
-        self._tasks.remove_task_by_uuid(task_uuid)
+    async def remove_task_by_uuid(self, task_uuid: str) -> "TaskScheduler":
+        await self._tasks.remove_task_by_uuid(task_uuid)
         return self
 
-    def remove_task_by_name(self, name: str) -> "TaskScheduler":
-        self._tasks.remove_task_by_name(name)
+    async def remove_task_by_name(self, name: str) -> "TaskScheduler":
+        await self._tasks.remove_task_by_name(name)
         return self
 
     def get_task_by_uuid(self, task_uuid: str) -> Union[ScheduledTask, AdHocTask, PlannedTask] | None:
@@ -643,12 +647,12 @@ class TaskScheduler:
         return self._tasks.find_task_by_name(name)
 
     async def tick(self):
-        for task in self._tasks.get_due_tasks():
-            self._run_task(task)
+        for task in await self._tasks.get_due_tasks():
+            await self._run_task(task)
 
-    def run_task_by_uuid(self, task_uuid: str, task_context: str | None = None):
+    async def run_task_by_uuid(self, task_uuid: str, task_context: str | None = None):
         # First reload tasks to ensure we have the latest state
-        self._tasks.reload()
+        await self._tasks.reload()
 
         # Get the task to run
         task = self.get_task_by_uuid(task_uuid)
@@ -666,26 +670,26 @@ class TaskScheduler:
         # If the task is in error state, reset it to IDLE first
         if task.state == TaskState.ERROR:
             self._printer.print(f"Resetting task '{task.name}' from ERROR to IDLE state before running")
-            self.update_task(task_uuid, state=TaskState.IDLE)
+            await self.update_task(task_uuid, state=TaskState.IDLE)
             # Force a reload to ensure we have the updated state
-            self._tasks.reload()
+            await self._tasks.reload()
             task = self.get_task_by_uuid(task_uuid)
             if not task:
                 raise ValueError(f"Task with UUID '{task_uuid}' not found after state reset")
 
         # Run the task
-        self._run_task(task, task_context)
+        await self._run_task(task, task_context)
 
-    def run_task_by_name(self, name: str, task_context: str | None = None):
+    async def run_task_by_name(self, name: str, task_context: str | None = None):
         task = self._tasks.get_task_by_name(name)
         if task is None:
             raise ValueError(f"Task with name {name} not found")
-        self._run_task(task, task_context)
+        await self._run_task(task, task_context)
 
-    def save(self):
-        self._tasks.save()
+    async def save(self):
+        await self._tasks.save()
 
-    def update_task_checked(
+    async def update_task_checked(
         self,
         task_uuid: str,
         verify_func: Callable[[Union[ScheduledTask, AdHocTask, PlannedTask]], bool] = lambda task: True,
@@ -700,12 +704,12 @@ class TaskScheduler:
         def _update_task(task):
             task.update(**update_params)
 
-        return self._tasks.update_task_by_uuid(task_uuid, _update_task, verify_func)
+        return await self._tasks.update_task_by_uuid(task_uuid, _update_task, verify_func)
 
-    def update_task(self, task_uuid: str, **update_params) -> Union[ScheduledTask, AdHocTask, PlannedTask] | None:
-        return self.update_task_checked(task_uuid, lambda task: True, **update_params)
+    async def update_task(self, task_uuid: str, **update_params) -> Union[ScheduledTask, AdHocTask, PlannedTask] | None:
+        return await self.update_task_checked(task_uuid, lambda task: True, **update_params)
 
-    def __new_context(self, task: Union[ScheduledTask, AdHocTask, PlannedTask]) -> AgentContext:
+    async def __new_context(self, task: Union[ScheduledTask, AdHocTask, PlannedTask]) -> AgentContext:
         if not task.context_id:
             raise ValueError(f"Task {task.name} has no context ID")
 
@@ -719,7 +723,7 @@ class TaskScheduler:
         save_tmp_chat(context)
         return context
 
-    def _get_chat_context(self, task: Union[ScheduledTask, AdHocTask, PlannedTask]) -> AgentContext:
+    async def _get_chat_context(self, task: Union[ScheduledTask, AdHocTask, PlannedTask]) -> AgentContext:
         context = AgentContext.get(task.context_id) if task.context_id else None
 
         if context:
@@ -733,16 +737,16 @@ class TaskScheduler:
             self._printer.print(
                 f"Scheduler Task {task.name} loaded from task {task.uuid} but context not found"
             )
-            return self.__new_context(task)
+            return await self.__new_context(task)
 
-    def _persist_chat(self, task: Union[ScheduledTask, AdHocTask, PlannedTask], context: AgentContext):
+    async def _persist_chat(self, task: Union[ScheduledTask, AdHocTask, PlannedTask], context: AgentContext):
         if context.id != task.context_id:
             raise ValueError(f"Context ID mismatch for task {task.name}: context {context.id} != task {task.context_id}")
         save_tmp_chat(context)
 
-    def _run_task(self, task: Union[ScheduledTask, AdHocTask, PlannedTask], task_context: str | None = None):
+    async def _run_task(self, task: Union[ScheduledTask, AdHocTask, PlannedTask], task_context: str | None = None):
 
-        def _run_task_wrapper(task_uuid: str, task_context: str | None = None):
+        async def _run_task_wrapper(task_uuid: str, task_context: str | None = None):
 
             # preflight checks with a snapshot of the task
             task_snapshot: Union[ScheduledTask, AdHocTask, PlannedTask] | None = self.get_task_by_uuid(task_uuid)
@@ -754,7 +758,7 @@ class TaskScheduler:
                 return
 
             # Atomically fetch and check the task's current state
-            current_task = self.update_task_checked(task_uuid, lambda task: task.state != TaskState.RUNNING, state=TaskState.RUNNING)
+            current_task = await self.update_task_checked(task_uuid, lambda task: task.state != TaskState.RUNNING, state=TaskState.RUNNING)
             if not current_task:
                 self._printer.print(f"Scheduler Task with UUID '{task_uuid}' not found or updated by another process")
                 return
@@ -763,7 +767,7 @@ class TaskScheduler:
                 self._printer.print(f"Scheduler Task '{current_task.name}' state is '{current_task.state}', skipping")
                 return
 
-            current_task.on_run()
+            await current_task.on_run()
 
             # the agent instance - init in try block
             agent = None
@@ -771,7 +775,7 @@ class TaskScheduler:
             try:
                 self._printer.print(f"Scheduler Task '{current_task.name}' started")
 
-                context = self._get_chat_context(current_task)
+                context = await self._get_chat_context(current_task)
 
                 # Ensure the context is properly registered in the AgentContext._contexts
                 # This is critical for the polling mechanism to find and stream logs
@@ -825,45 +829,49 @@ class TaskScheduler:
 
                 # Persist after setting up the context but before running the agent
                 # This ensures the task context is saved and can be found by polling
-                self._persist_chat(current_task, context)
+                await self._persist_chat(current_task, context)
 
-                result = agent.monologue()
+                result = await agent.monologue()
 
                 # Success
                 self._printer.print(f"Scheduler Task '{current_task.name}' completed: {result}")
-                self._persist_chat(current_task, context)
-                current_task.on_success(result)
+                await self._persist_chat(current_task, context)
+                await current_task.on_success(result)
 
                 # Explicitly verify task was updated in storage after success
-                self._tasks.reload()
+                await self._tasks.reload()
                 updated_task = self.get_task_by_uuid(task_uuid)
                 if updated_task and updated_task.state != TaskState.IDLE:
                     self._printer.print(f"Fixing task state consistency: '{current_task.name}' state is not IDLE after success")
-                    self.update_task(task_uuid, state=TaskState.IDLE)
+                    await self.update_task(task_uuid, state=TaskState.IDLE)
 
             except Exception as e:
                 # Error
                 self._printer.print(f"Scheduler Task '{current_task.name}' failed: {e}")
-                current_task.on_error(str(e))
+                await current_task.on_error(str(e))
 
                 # Explicitly verify task was updated in storage after error
-                self._tasks.reload()
+                await self._tasks.reload()
                 updated_task = self.get_task_by_uuid(task_uuid)
                 if updated_task and updated_task.state != TaskState.ERROR:
                     self._printer.print(f"Fixing task state consistency: '{current_task.name}' state is not ERROR after failure")
-                    self.update_task(task_uuid, state=TaskState.ERROR)
+                    await self.update_task(task_uuid, state=TaskState.ERROR)
 
                 if agent:
                     agent.handle_critical_exception(e)
             finally:
                 # Call on_finish for task-specific cleanup
-                current_task.on_finish()
+                await current_task.on_finish()
 
                 # Make one final save to ensure all states are persisted
-                self._tasks.save()
+                await self._tasks.save()
 
         deferred_task = DeferredTask(thread_name=self.__class__.__name__)
         deferred_task.start_task(_run_task_wrapper, task.uuid, task_context)
+
+        # Ensure background execution doesn't exit immediately on async await, especially in script contexts
+        # This helps prevent premature exits when running from non-event-loop contexts
+        asyncio.create_task(asyncio.sleep(0.1))
 
     def serialize_all_tasks(self) -> list[Dict[str, Any]]:
         """

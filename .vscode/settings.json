@@ -12,8 +12,5 @@
         "*": ["webui/*"]
     },
     // Optional: point VSCode to jsconfig.json if you add one
-    "jsconfig.json": "${workspaceFolder}/jsconfig.json",
-    "python-envs.defaultEnvManager": "ms-python.python:conda",
-    "python-envs.defaultPackageManager": "ms-python.python:conda",
-    "python-envs.pythonProjects": []
+    "jsconfig.json": "${workspaceFolder}/jsconfig.json"
 }

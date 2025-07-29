@@ -4,7 +4,7 @@ from werkzeug.utils import secure_filename
 
 
 class UploadFile(ApiHandler):
-    def process(self, input: dict, request: Request) -> dict | Response:
+    async def process(self, input: dict, request: Request) -> dict | Response:
         if "file" not in request.files:
             raise Exception("No file part")
 
