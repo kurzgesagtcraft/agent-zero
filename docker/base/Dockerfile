@@ -3,6 +3,8 @@ FROM kalilinux/kali-rolling
 
 
 # Set locale to en_US.UTF-8 and timezone to UTC
+# Copy contents of the project to /
+COPY ./fs/ /
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y locales tzdata
 RUN sed -i -e 's/# \(en_US\.UTF-8 .*\)/\1/' /etc/locale.gen && \
     dpkg-reconfigure --frontend=noninteractive locales && \
@@ -14,9 +16,6 @@ ENV LANG=en_US.UTF-8
 ENV LANGUAGE=en_US:en
 ENV LC_ALL=en_US.UTF-8
 ENV TZ=UTC
-
-# Copy contents of the project to /
-COPY ./fs/ /
 
 # install packages software (split for better cache management)
 RUN bash /ins/install_base_packages1.sh
